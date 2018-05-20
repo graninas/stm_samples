@@ -10,6 +10,11 @@ using namespace std;
 
 #include <stm.h>
 
+stm::STML<stm::Unit> incrementCounterArticle(const stm::TVar<int>& tCounter)
+{
+    return stm::modifyTVar<int>(tCounter, [](int i) { return i + 1; });
+}
+
 stm::STML<int> incrementCounter(const stm::TVar<int>& tCounter)
 {
     return stm::modifyTVarRet<int>(tCounter, [](int i) { return i + 1; });
@@ -138,6 +143,35 @@ void guaranteedCounterWorker(const CounterRt& rt)
     }
 }
 
+
+struct ArticleCounterRt
+{
+    int thread;
+    std::mutex& logLock;
+    stm::Context& context;
+    stm::TVar<int> tCounter;
+};
+
+void articleCounterWorker(const ArticleCounterRt& rt)
+{
+    int i = 0;
+    while (true)
+    {
+        stm::atomically(rt.context, incrementCounterArticle(rt.tCounter));
+        int counter = stm::atomically(rt.context, stm::readTVar(rt.tCounter));
+        {
+            std::lock_guard g(rt.logLock);
+            std::cout << "thread: [" << rt.thread << "] counter:" << counter << std::endl;
+        }
+
+        if (i++ >= 50)
+            return;
+
+        std::chrono::microseconds interval(1000 * 100); // 100 msecs
+        std::this_thread::sleep_for(interval);
+    }
+}
+
 void run2CompetingThreads()
 {
     stm::Context ctx;
@@ -145,31 +179,39 @@ void run2CompetingThreads()
 
     std::mutex logLock;
 
-    std::cout << "--> Eventual Counter: start." << endl;
-
     std::vector<std::thread> threads;
-    threads.push_back(std::thread(eventualCounterWorker, CounterRt {logLock, ctx, tCounter, 25, true , 300}));
-    threads.push_back(std::thread(eventualCounterWorker, CounterRt {logLock, ctx, tCounter, 25, false, 300}));
+    threads.push_back(std::thread(articleCounterWorker, ArticleCounterRt {1, logLock, ctx, tCounter}));
+    threads.push_back(std::thread(articleCounterWorker, ArticleCounterRt {2, logLock, ctx, tCounter}));
 
     for (auto& t: threads)
         t.join();
 
-    int result = stm::atomically(ctx, stm::readTVar(tCounter));
-    std::cout << "--> Eventual Counter: threads ended. Result: " << result << endl;
 
-    std::cout << "--> Guaranteed Counter: start." << endl;
+//    std::cout << "--> Eventual Counter: start." << endl;
 
-    threads.clear();
-    stm::atomically(ctx, writeTVar(tCounter, 0));
+//    std::vector<std::thread> threads;
+//    threads.push_back(std::thread(eventualCounterWorker, CounterRt {logLock, ctx, tCounter, 25, true , 300}));
+//    threads.push_back(std::thread(eventualCounterWorker, CounterRt {logLock, ctx, tCounter, 25, false, 300}));
 
-    threads.push_back(std::thread(guaranteedCounterWorker, CounterRt {logLock, ctx, tCounter, 25, true , 400}));
-    threads.push_back(std::thread(guaranteedCounterWorker, CounterRt {logLock, ctx, tCounter, 25, false, 400}));
+//    for (auto& t: threads)
+//        t.join();
 
-    for (auto& t: threads)
-        t.join();
+//    int result = stm::atomically(ctx, stm::readTVar(tCounter));
+//    std::cout << "--> Eventual Counter: threads ended. Result: " << result << endl;
 
-    result = stm::atomically(ctx, stm::readTVar(tCounter));
-    std::cout << "--> Guaranteed Counter: threads ended. Result: " << result << endl;
+//    std::cout << "--> Guaranteed Counter: start." << endl;
+
+//    threads.clear();
+//    stm::atomically(ctx, writeTVar(tCounter, 0));
+
+//    threads.push_back(std::thread(guaranteedCounterWorker, CounterRt {logLock, ctx, tCounter, 25, true , 400}));
+//    threads.push_back(std::thread(guaranteedCounterWorker, CounterRt {logLock, ctx, tCounter, 25, false, 400}));
+
+//    for (auto& t: threads)
+//        t.join();
+
+//    result = stm::atomically(ctx, stm::readTVar(tCounter));
+//    std::cout << "--> Guaranteed Counter: threads ended. Result: " << result << endl;
 }
 
 int main()
